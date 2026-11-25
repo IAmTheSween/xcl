@@ -581,3 +581,49 @@ fn gpu_direct_unaligned_multi_dword_format_store() {
     let got: Vec<u8> = r.mem.iter().flat_map(|v| v.to_le_bytes()).collect();
     assert_eq!(&got[0xFC..0x118], &want[0xFC..0x118], "bytes 0xFC..0x118 after the store at 0x102");
 }
+
+/// `v_movreld_b32` and `v_movrels_b32` with `m0 > 0` where target or source VGPRs are not
+/// statically referenced earlier in the block: `top_vgpr` must be bounded by the program's
+/// `max_vgpr` rather than `init.touched` (which starts empty outside `Entry::Kernel`).
+#[test]
+fn v_movrel_with_non_static_target_vgpr() {
+    use crate::gpu::recomp::runner;
+    let code = prog(&[
+        ("V_MOV_B32", "ENC_VOP1", &[("VDST", 1), ("SRC0", 160)], None), // v1 = 32
+        ("S_MOV_B32", "ENC_SOP1", &[("SDST", 124), ("SSRC0", 130)], None), // m0 = 2
+        ("V_MOVRELD_B32", "ENC_VOP1", &[("VDST", 0), ("SRC0", 257)], None), // v[0 + m0] = v[2] = v1 = 32
+        ("V_MOVRELS_B32", "ENC_VOP1", &[("VDST", 3), ("SRC0", 256)], None), // v3 = v[0 + m0] = v2 = 32
+        ("V_MOV_B32", "ENC_VOP1", &[("VDST", 10), ("SRC0", 259)], None), // v10 = v3 = 32 (names max_vgpr = 10)
+    ]);
+    let ko = KernelOptions { wave64: false, split: false, mem_windows: 1, sampler_base: 0 };
+    let dxil = translate(&code, ko).unwrap_or_else(|e| panic!("direct DXIL failed: {e}"));
+    if runner::wave32_supported() != Ok(true) {
+        return runner::skip_test("no wave32");
+    }
+    let st = runner::KernelState::default();
+    let direct = runner::run(&dxil, &st, &[]).unwrap();
+    assert_eq!(direct.vgpr[0][10], 32, "v10 must be 32 (transferred through dynamically-indexed v2)");
+}
+
+/// `v_swaprel_b32` with `m0 > 0` where intermediate indexed VGPRs are not
+/// statically referenced earlier in the block: `top_vgpr` must be bounded by the program's
+/// `max_vgpr` rather than `init.touched`.
+#[test]
+fn v_swaprel_with_non_static_target_vgpr() {
+    use crate::gpu::recomp::runner;
+    let code = prog(&[
+        ("V_MOV_B32", "ENC_VOP1", &[("VDST", 1), ("SRC0", 160)], None), // v1 = 32
+        ("V_MOV_B32", "ENC_VOP1", &[("VDST", 2), ("SRC0", 161)], None), // v2 = 33
+        ("S_MOV_B32", "ENC_SOP1", &[("SDST", 124), ("SSRC0", 130)], None), // m0 = 2
+        ("V_SWAPREL_B32", "ENC_VOP1", &[("VDST", 1), ("SRC0", 256)], None), // swap(v1, v[0 + m0] = v2) -> v1=33, v2=32
+        ("V_MOV_B32", "ENC_VOP1", &[("VDST", 10), ("SRC0", 257)], None), // v10 = v1 = 33 (names max_vgpr = 10)
+    ]);
+    let ko = KernelOptions { wave64: false, split: false, mem_windows: 1, sampler_base: 0 };
+    let dxil = translate(&code, ko).unwrap_or_else(|e| panic!("direct DXIL failed: {e}"));
+    if runner::wave32_supported() != Ok(true) {
+        return runner::skip_test("no wave32");
+    }
+    let st = runner::KernelState::default();
+    let direct = runner::run(&dxil, &st, &[]).unwrap();
+    assert_eq!(direct.vgpr[0][10], 33, "v10 must be 33 after swaprel");
+}

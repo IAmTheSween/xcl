@@ -1619,6 +1619,9 @@ impl<I: Ir> Lower<'_, I> {
         if self.track_frexp_denorm && self.partial[b] && super::emit::writes_frexp_f32_denorm(d) {
             return Err("a FREXP denormal mode write where some lanes are elsewhere".into());
         }
+        if name.starts_with("V_MOVREL") || name == "V_SWAPREL_B32" {
+            return Err("movrel/swaprel dynamically indexes VGPRs".into());
+        }
         // instructions whose #1426 semantics are known to differ from the HLSL path and the
         // console (each reported on #1426): left to the fallback until fixed there
         const DIFFERS_ON_1426: &[&str] = &[
@@ -3332,6 +3335,17 @@ pub(crate) mod tests {
         // the CPU lowering has no number form of it (DXIL takes it from #1426): refused, no panic
         let err = lower_kernel(&decode(lines), false, Interp::default()).err().expect("refused");
         assert_eq!(err, "unsupported S_BCNT1_I32_B32");
+    }
+
+    #[test]
+    fn dynamically_indexed_vgpr_moves_are_refused_in_per_lane() {
+        let lines: &[I] = &[
+            ("S_MOV_B32", "ENC_SOP1", &[("SDST", 124), ("SSRC0", 130)]), // m0 = 2
+            ("V_MOVRELD_B32", "ENC_VOP1", &[("VDST", 0), ("SRC0", 257)]),
+            ENDPGM,
+        ];
+        let err = lower_kernel(&decode(lines), false, Interp::default()).err().expect("refused");
+        assert_eq!(err, "unsupported V_MOVRELD_B32 (movrel/swaprel dynamically indexes VGPRs)");
     }
 
     /// `s_wqm` of a mask sets every lane of a quad with a bit; `s_cselect` picks a mask or a

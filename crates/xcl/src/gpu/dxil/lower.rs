@@ -169,6 +169,8 @@ pub struct Lw {
     pub s: Shader,
     pub ssa: Ssa,
     pub init: Init,
+    /// the highest VGPR the program references (v_movrel* and v_swaprel ranges)
+    pub max_vgpr: u64,
     pub wave64: bool,
     /// wave64 program in two hardware wave32 halves
     pub split: bool,

@@ -450,10 +450,20 @@ impl Lw {
         let (mems, heap_mem) = mem_windows(&mut s, o.mem_windows, cs.is_some());
         let i32 = s.m.i32();
         let z = s.m.i32c(0);
+        let max_vgpr = insts
+            .iter()
+            .flat_map(|d| {
+                let (r, w) = crate::gpu::rdna2::vgpr_uses(d);
+                r.into_iter().chain(w)
+            })
+            .filter(|&r| r < 256)
+            .max()
+            .unwrap_or(0);
         let mut lw = Lw {
             s,
             ssa: Ssa::new(i32),
             init: Init { io: Some(io), compute: None, vgpr_base: None, entry: Block(0), touched: BTreeSet::new(), slots: HashMap::new(), mem: None },
+            max_vgpr,
             wave64: o.wave64,
             split,
             lane: z,
